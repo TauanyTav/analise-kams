@@ -661,18 +661,14 @@ _vendas_real = [float(_kam_all[_kam_all["Mês"] == m]["Venda Total"].sum()) for 
 # 4. Receita reconhecida REAL — base de receita IFRS, BU Corporate+Consulting
 @st.cache_data
 def _load_rec_real(path):
-    df = pd.read_excel(path, sheet_name="Base de Receita", header=1)
+    df = pd.read_excel(path)
     df["Total"] = pd.to_numeric(df["Total"], errors="coerce").fillna(0)
     return df
 
 try:
     _df_rec  = _load_rec_real("Base_de_receita_ate_abril_2026.xlsx")
     _mes_col = "MÊS IFRS CONTABIL - REPORT"
-    _df_r26  = _df_rec[
-        (_df_rec["ANO IFRS CONTABIL - REPORT"] == 2026) &
-        (_df_rec[_mes_col].isin([1, 2, 3, 4]))
-    ]
-    _cc       = _df_r26[_df_r26["BU"].isin(["Corporate", "Consulting"])]
+    _cc       = _df_rec[_df_rec["BU"].isin(["Corporate", "Consulting"])]
     _rec_real = [float(_cc[_cc[_mes_col] == m]["Total"].sum()) for m in [1, 2, 3, 4]]
     _rec_ok   = True
 except FileNotFoundError:
