@@ -701,11 +701,21 @@ with tab6:
     st.markdown('<div class="section-title">Vendas Totais por Mês: Real vs. Orçamento</div>',
                 unsafe_allow_html=True)
 
-    _df_real_all = df_new[df_new["Mês"].isin(_MES4_NUM)]
-    _vr_mes = [float(_df_real_all[_df_real_all["Mês"]==m]["Venda Total"].sum()) for m in _MES4_NUM]
+    # Filtro: apenas Corporate + Consulting
+    _CC_FILTER_REAL = ["Corporate", "Consulting"]
+    _CC_FILTER_ORC  = ["Corporate", "Consulting"]
+
+    _df_real_cc = df_new[
+        df_new["Mês"].isin(_MES4_NUM) &
+        df_new["Group Accountability"].isin(_CC_FILTER_REAL)
+    ]
+    _vr_mes = [float(_df_real_cc[_df_real_cc["Mês"]==m]["Venda Total"].sum()) for m in _MES4_NUM]
 
     if _orc_ok:
-        _orc_jan_abr = _df_orc[_df_orc["mês2"].isin(_MES4_NUM)]
+        _orc_jan_abr = _df_orc[
+            _df_orc["mês2"].isin(_MES4_NUM) &
+            _df_orc["BU Accountability"].isin(_CC_FILTER_ORC)
+        ]
         _vo_mes = [float(_orc_jan_abr[_orc_jan_abr["mês2"]==m]["Value"].sum()) for m in _MES4_NUM]
     else:
         _vo_mes = [0]*4
@@ -736,8 +746,8 @@ with tab6:
     st.markdown('<div class="section-title">Vendas por Subproduto: Real vs. Orçamento (Jan–Abr acumulado)</div>',
                 unsafe_allow_html=True)
 
-    # Real por subproduto (usando 'de para subproduto' para alinhar com orçamento)
-    _real_sub = (_df_real_all[_df_real_all["Venda Total"] > 0]
+    # Real por subproduto — só Corporate + Consulting
+    _real_sub = (_df_real_cc[_df_real_cc["Venda Total"] > 0]
                  .groupby("Subproduto")["Venda Total"].sum()
                  .reset_index().rename(columns={"Subproduto":"sub","Venda Total":"real"}))
 
@@ -811,6 +821,130 @@ with tab6:
     st.plotly_chart(fig_r1, use_container_width=True)
 
     # ════════════════════════════════════════════════════════════════════════
+    # BLOCO 3b — VENDAS (BARRAS) vs RECONHECIMENTO (LINHA): ORCADO x REALIZADO
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-title">Vendas vs. Reconhecimento de Receita · Orçado vs. Realizado</div>',
+                unsafe_allow_html=True)
+    st.markdown("""
+    <div class="insight-box" style="margin-bottom:12px;font-size:0.85rem">
+    🔎 <b>Como ler:</b> As <b>barras</b> mostram o que foi vendido no mês (contratos fechados).
+    A <b>linha</b> mostra quanto disso (+ vendas de meses anteriores) virou receita reconhecida no P&amp;L.
+    Se a linha cresce mais devagar que as barras → o reconhecimento está atrasado.
+    Se as barras caem → o problema está nas vendas. Se os dois caem → ambos.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Séries orçado
+    _vo_cc  = [float(_orc_jan_abr[_orc_jan_abr["mês2"]==m]["Value"].sum()) for m in _MES4_NUM] if _orc_ok else [0]*4
+    _rm_cc  = [pd.to_numeric(_xl_c.iloc[94].iloc[4+j], errors="coerce") for j in range(4)]  # receita meta corp+cons
+
+    # Séries realizado
+    _vr_cc  = _vr_mes  # já calculado acima (Corp+Cons real)
+    _rr_cc  = _rec_real_vals  # já calculado acima (IFRS Corp+Cons)
+
+    col_orc, col_real = st.columns(2)
+
+    with col_orc:
+        fig_orc = go.Figure()
+        fig_orc.add_trace(go.Bar(
+            name="Vendas Orçadas", x=_MES4, y=_vo_cc,
+            marker_color="#94A3B8",
+            text=[fmt_brl(v) for v in _vo_cc], textposition="outside",
+        ))
+        fig_orc.add_trace(go.Scatter(
+            name="Reconhecimento Meta", x=_MES4, y=_rm_cc,
+            mode="lines+markers+text",
+            line=dict(color=COLORS["accent"], width=3),
+            marker=dict(size=10, symbol="circle"),
+            text=[fmt_brl(v) for v in _rm_cc],
+            textposition="top center", textfont=dict(size=9),
+        ))
+        # Área de gap entre barra e linha
+        fig_orc.update_layout(
+            title="📋 ORÇADO · Barras = Vendas | Linha = Reconhecimento",
+            height=420, barmode="group",
+            legend=dict(orientation="h", y=-0.2, font_size=11),
+            yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Valor (R$)"),
+            **PLOT_BASE,
+        )
+        st.plotly_chart(fig_orc, use_container_width=True)
+
+        # KPIs orçado
+        _ratio_orc = [rm/vo*100 if vo>0 else 0 for rm,vo in zip(_rm_cc, _vo_cc)]
+        for mes, vo, rm, rt in zip(_MES4, _vo_cc, _rm_cc, _ratio_orc):
+            cls = "ok" if rt >= 80 else "warn"
+            st.markdown(f"""<div class="insight-box {cls}" style="padding:8px 12px;margin-bottom:6px;font-size:0.82rem">
+            <b>{mes}</b> · Vendas: {fmt_brl(vo)} → Reconhecido: {fmt_brl(rm)} · <b>{rt:.0f}% de conversão</b>
+            </div>""", unsafe_allow_html=True)
+
+    with col_real:
+        fig_real = go.Figure()
+        fig_real.add_trace(go.Bar(
+            name="Vendas Reais", x=_MES4, y=_vr_cc,
+            marker_color="#2D6BE4",
+            text=[fmt_brl(v) for v in _vr_cc], textposition="outside",
+        ))
+        fig_real.add_trace(go.Scatter(
+            name="Reconhecimento Real (IFRS)", x=_MES4, y=_rr_cc,
+            mode="lines+markers+text",
+            line=dict(color=COLORS["green"], width=3),
+            marker=dict(size=10, symbol="circle"),
+            text=[fmt_brl(v) for v in _rr_cc],
+            textposition="top center", textfont=dict(size=9),
+        ))
+        fig_real.update_layout(
+            title="✅ REALIZADO · Barras = Vendas | Linha = Reconhecimento",
+            height=420, barmode="group",
+            legend=dict(orientation="h", y=-0.2, font_size=11),
+            yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Valor (R$)"),
+            **PLOT_BASE,
+        )
+        st.plotly_chart(fig_real, use_container_width=True)
+
+        # KPIs realizado
+        _ratio_real = [rr/vr*100 if vr>0 else 0 for rr,vr in zip(_rr_cc, _vr_cc)]
+        for mes, vr, rr, rt in zip(_MES4, _vr_cc, _rr_cc, _ratio_real):
+            cls = "ok" if rt >= 80 else "warn"
+            st.markdown(f"""<div class="insight-box {cls}" style="padding:8px 12px;margin-bottom:6px;font-size:0.82rem">
+            <b>{mes}</b> · Vendas: {fmt_brl(vr)} → Reconhecido: {fmt_brl(rr)} · <b>{rt:.0f}% de conversão</b>
+            </div>""", unsafe_allow_html=True)
+
+    # Insight diagnóstico automático
+    st.markdown('<div class="section-title">🔎 Diagnóstico: Onde está o Gap?</div>', unsafe_allow_html=True)
+    _gap_venda     = sum(_vr_cc) - sum(_vo_cc)
+    _gap_rec       = sum(_rr_cc) - sum(v for v in _rm_cc if pd.notna(v))
+    _gap_conv_orc  = sum(_rm_cc) / sum(_vo_cc) * 100 if sum(_vo_cc) > 0 else 0
+    _gap_conv_real = sum(_rr_cc) / sum(_vr_cc) * 100 if sum(_vr_cc) > 0 else 0
+
+    dg1, dg2, dg3 = st.columns(3)
+    with dg1:
+        cls = "ok" if _gap_venda >= 0 else "warn"
+        sinal = "+" if _gap_venda >= 0 else ""
+        pct = _gap_venda / sum(_vo_cc) * 100 if sum(_vo_cc) else 0
+        st.markdown(f"""<div class="insight-box {cls}">
+        <b>📦 Gap de Vendas</b><br>
+        Real vs. Orçado: <b>{sinal}{fmt_brl(_gap_venda)}</b> ({sinal}{pct:.1f}%)<br>
+        {"✅ Vendas acima do orçamento" if _gap_venda>=0 else "⚠️ Vendas abaixo do orçamento — principal driver do gap"}
+        </div>""", unsafe_allow_html=True)
+    with dg2:
+        cls = "ok" if _gap_rec >= 0 else "warn"
+        sinal = "+" if _gap_rec >= 0 else ""
+        pct = _gap_rec / sum(v for v in _rm_cc if pd.notna(v)) * 100 if _rm_cc else 0
+        st.markdown(f"""<div class="insight-box {cls}">
+        <b>📊 Gap de Reconhecimento</b><br>
+        Real vs. Meta: <b>{sinal}{fmt_brl(_gap_rec)}</b> ({sinal}{pct:.1f}%)<br>
+        {"✅ Reconhecimento acima da meta" if _gap_rec>=0 else "⚠️ Reconhecimento abaixo da meta — cohort atrasado"}
+        </div>""", unsafe_allow_html=True)
+    with dg3:
+        delta_conv = _gap_conv_real - _gap_conv_orc
+        cls = "ok" if delta_conv >= 0 else "warn"
+        st.markdown(f"""<div class="insight-box {cls}">
+        <b>🔄 Taxa de Conversão (Vendas → Receita)</b><br>
+        Orçado: <b>{_gap_conv_orc:.0f}%</b> · Realizado: <b>{_gap_conv_real:.0f}%</b><br>
+        {"✅ Conversão melhor que o planejado" if delta_conv>=0 else f"⚠️ Conversão {abs(delta_conv):.0f}pp abaixo do planejado"}
+        </div>""", unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════════
     # BLOCO 4 — TABELA RESUMO CONSOLIDADA
     # ════════════════════════════════════════════════════════════════════════
     st.markdown('<div class="section-title">Resumo Consolidado Jan–Abr</div>', unsafe_allow_html=True)
@@ -837,9 +971,10 @@ with tab6:
     with ci1:
         cls = "ok" if _gap_v >= 0 else "warn"
         pct = _gap_v / sum(_vo_mes) * 100 if sum(_vo_mes) else 0
+        sinal = "+" if _gap_v >= 0 else ""
         st.markdown(f"""<div class="insight-box {cls}">
         <b>{"✅ Vendas acima do orçamento" if _gap_v>=0 else "⚠️ Vendas abaixo do orçamento"}</b><br>
-        Jan–Abr: {"+".rstrip("+")+("" if _gap_v>=0 else "")}{pct:.1f}% vs. orçado.<br>
+        Corp+Cons Jan–Abr: {sinal}{pct:.1f}% vs. orçado.<br>
         Gap: {fmt_brl(abs(_gap_v))}.
         </div>""", unsafe_allow_html=True)
     with ci2:
