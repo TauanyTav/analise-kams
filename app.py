@@ -642,23 +642,16 @@ with tab5:
         st.dataframe(df_tbl2, use_container_width=True, hide_index=True)
 
 # ────────────────────────────────────────────────────────────────────────────
-# TAB 6 – COHORT DE RECEITA
-# ── 4 séries fixas (visão macro, independente dos filtros da sidebar) ──────
+# TAB 6 – VENDAS & RECEITA · REAL vs. ORÇAMENTO
 # ────────────────────────────────────────────────────────────────────────────
-_MES4 = ["Jan", "Fev", "Mar", "Abr"]
-_xl   = pd.read_excel(COHORT_FILE, sheet_name="Cohort venda x receita 2026")
 
-# 1. Vendas META orçadas — TOTAL "Corp+Cons Vendas 2026+Programado" (row 92)
-_vendas_meta = [pd.to_numeric(_xl.iloc[92].iloc[4+j], errors="coerce") for j in range(4)]
+@st.cache_data
+def load_orcamento(path):
+    df = pd.read_excel(path, sheet_name="Base Venda")
+    df["mês2"]  = pd.to_numeric(df["mês2"],  errors="coerce").astype("Int64")
+    df["Value"] = pd.to_numeric(df["Value"], errors="coerce").fillna(0)
+    return df
 
-# 2. Receita reconhecida META — "Meta receita Corp+Cons 2026" (row 94)
-_rec_meta = [pd.to_numeric(_xl.iloc[94].iloc[4+j], errors="coerce") for j in range(4)]
-
-# 3. Vendas REAIS KAM — base completa de vendas, canal KAM, Jan-Abr
-_kam_all     = df_new[df_new["Canal"] == "KAM"]
-_vendas_real = [float(_kam_all[_kam_all["Mês"] == m]["Venda Total"].sum()) for m in [1, 2, 3, 4]]
-
-# 4. Receita reconhecida REAL — base de receita IFRS, BU Corporate+Consulting
 @st.cache_data
 def _load_rec_real(path):
     df = pd.read_excel(path)
@@ -666,136 +659,203 @@ def _load_rec_real(path):
     return df
 
 try:
-    _df_rec  = _load_rec_real("Base_de_receita_ate_abril_2026.xlsx")
-    _mes_col = "MÊS IFRS CONTABIL - REPORT"
-    _cc       = _df_rec[_df_rec["BU"].isin(["Corporate", "Consulting"])]
-    _rec_real = [float(_cc[_cc[_mes_col] == m]["Total"].sum()) for m in [1, 2, 3, 4]]
-    _rec_ok   = True
+    _df_orc  = load_orcamento("Base_de_Vendas_Orçamento.xlsx")
+    _orc_ok  = True
 except FileNotFoundError:
-    _rec_real = [0.0, 0.0, 0.0, 0.0]
-    _rec_ok   = False
+    _orc_ok  = False
+
+try:
+    _df_rec  = _load_rec_real("Base_de_receita_ate_abril_2026.xlsx")
+    _cc      = _df_rec[_df_rec["BU"].isin(["Corporate", "Consulting"])]
+    _rec_ok  = True
+except FileNotFoundError:
+    _rec_ok  = False
+
+_MES4     = ["Jan", "Fev", "Mar", "Abr"]
+_MES4_NUM = [1, 2, 3, 4]
+_MES_MAP  = {1:"Jan", 2:"Fev", 3:"Mar", 4:"Abr"}
+
+# ── Receita reconhecida META (cohort row 94) ───────────────────────────────
+_xl_c    = pd.read_excel(COHORT_FILE, sheet_name="Cohort venda x receita 2026")
+_rec_meta_vals = [pd.to_numeric(_xl_c.iloc[94].iloc[4+j], errors="coerce") for j in range(4)]
 
 with tab6:
+    if not _orc_ok:
+        st.warning("Arquivo `Base_de_Vendas_Orçamento.xlsx` não encontrado.")
     if not _rec_ok:
-        st.warning("Arquivo `Base_de_receita_ate_abril_2026.xlsx` não encontrado. Adicione-o ao repositório.")
+        st.warning("Arquivo `Base_de_receita_ate_abril_2026.xlsx` não encontrado.")
 
     st.markdown("""
     <div class="insight-box" style="margin-bottom:16px">
-    <b>📖 Legenda das 4 séries:</b><br>
-    🔵 <b>Vendas Reais KAM</b> — valor contratado no mês · <i>Base_de_vendas_por_KAM_completa</i><br>
-    ⬛ <b>Vendas Meta (Orçamento)</b> — cohort orçado Corp+Cons · <i>Cohort venda x receita 2026</i><br>
-    🟢 <b>Receita Reconhecida Real</b> — IFRS contábil Corp+Consulting · <i>Base_de_receita_ate_abril_2026</i><br>
-    🔶 <b>Receita Meta</b> — meta de reconhecimento Corp+Cons · <i>Cohort venda x receita 2026</i>
+    <b>📖 Fontes de cada série:</b><br>
+    🔵 <b>Vendas Reais</b> — <i>Base_de_vendas_por_KAM_completa</i> · todos os canais · Jan–Abr<br>
+    ⬛ <b>Vendas Orçadas</b> — <i>Base_de_Vendas_Orçamento</i> · todos os canais · Jan–Abr<br>
+    🟢 <b>Receita Reconhecida Real</b> — <i>Base_de_receita_ate_abril_2026</i> · BU Corp+Cons · IFRS<br>
+    🔶 <b>Receita Meta</b> — <i>Cohort venda x receita 2026</i> · "Meta receita Corp+Cons 2026"
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Gráfico 1: Vendas Reais vs Meta ─────────────────────────────────
-    st.markdown('<div class="section-title">Vendas: Realizado vs. Orçamento</div>', unsafe_allow_html=True)
-
-    fig_v = go.Figure()
-    fig_v.add_trace(go.Bar(name="Vendas Reais KAM", x=_MES4, y=_vendas_real,
-        marker_color="#2D6BE4",
-        text=[fmt_brl(v) for v in _vendas_real], textposition="outside", offsetgroup=1))
-    fig_v.add_trace(go.Bar(name="Vendas Meta (Orçamento)", x=_MES4, y=_vendas_meta,
-        marker_color="#94A3B8",
-        text=[fmt_brl(v) for v in _vendas_meta], textposition="outside", offsetgroup=2))
-    for mes, real, meta in zip(_MES4, _vendas_real, _vendas_meta):
-        if meta and meta > 0:
-            pct = real / meta * 100
-            fig_v.add_annotation(x=mes, y=max(real, meta) * 1.2,
-                text=f"<b>{pct:.0f}%</b>", showarrow=False,
-                font=dict(size=12, color=COLORS["green"] if pct>=100 else COLORS["yellow"] if pct>=70 else COLORS["red"]))
-    fig_v.update_layout(barmode="group", height=460,
-        title="Vendas Reais KAM vs. Meta Orçada — % atingimento no topo",
-        legend=dict(orientation="h", y=-0.15, font_size=12),
-        yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Valor (R$)"), **PLOT_BASE)
-    st.plotly_chart(fig_v, use_container_width=True)
-
-    # ── Gráfico 2: Receita Reconhecida Real vs Meta ──────────────────────
-    st.markdown('<div class="section-title">Receita Reconhecida (IFRS Corp+Cons): Realizado vs. Meta</div>',
+    # ════════════════════════════════════════════════════════════════════════
+    # BLOCO 1 — VENDAS: REAL vs ORÇAMENTO por mês
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-title">Vendas Totais por Mês: Real vs. Orçamento</div>',
                 unsafe_allow_html=True)
 
-    fig_r = go.Figure()
-    fig_r.add_trace(go.Bar(name="Receita Reconhecida Real", x=_MES4, y=_rec_real,
-        marker_color=COLORS["green"],
-        text=[fmt_brl(v) for v in _rec_real], textposition="outside", offsetgroup=1))
-    fig_r.add_trace(go.Bar(name="Receita Meta", x=_MES4, y=_rec_meta,
+    _df_real_all = df_new[df_new["Mês"].isin(_MES4_NUM)]
+    _vr_mes = [float(_df_real_all[_df_real_all["Mês"]==m]["Venda Total"].sum()) for m in _MES4_NUM]
+
+    if _orc_ok:
+        _orc_jan_abr = _df_orc[_df_orc["mês2"].isin(_MES4_NUM)]
+        _vo_mes = [float(_orc_jan_abr[_orc_jan_abr["mês2"]==m]["Value"].sum()) for m in _MES4_NUM]
+    else:
+        _vo_mes = [0]*4
+
+    fig_v1 = go.Figure()
+    fig_v1.add_trace(go.Bar(name="Real", x=_MES4, y=_vr_mes, offsetgroup=1,
+        marker_color="#2D6BE4",
+        text=[fmt_brl(v) for v in _vr_mes], textposition="outside"))
+    fig_v1.add_trace(go.Bar(name="Orçamento", x=_MES4, y=_vo_mes, offsetgroup=2,
         marker_color="#94A3B8",
-        text=[fmt_brl(v) for v in _rec_meta], textposition="outside", offsetgroup=2))
-    for mes, real, meta in zip(_MES4, _rec_real, _rec_meta):
-        if meta and meta > 0:
-            pct = real / meta * 100
-            fig_r.add_annotation(x=mes, y=max(real, meta) * 1.2,
+        text=[fmt_brl(v) for v in _vo_mes], textposition="outside"))
+    for mes, vr, vo in zip(_MES4, _vr_mes, _vo_mes):
+        if vo > 0:
+            pct = vr / vo * 100
+            cor = COLORS["green"] if pct >= 100 else COLORS["yellow"] if pct >= 70 else COLORS["red"]
+            fig_v1.add_annotation(x=mes, y=max(vr, vo)*1.18,
                 text=f"<b>{pct:.0f}%</b>", showarrow=False,
-                font=dict(size=12, color=COLORS["green"] if pct>=100 else COLORS["yellow"] if pct>=70 else COLORS["red"]))
-    fig_r.update_layout(barmode="group", height=460,
-        title="Receita Reconhecida Real (IFRS) vs. Meta — % atingimento no topo",
+                font=dict(size=12, color=cor))
+    fig_v1.update_layout(barmode="group", height=460,
+        title="Vendas Mensais — % atingimento no topo de cada par",
         legend=dict(orientation="h", y=-0.15, font_size=12),
         yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Valor (R$)"), **PLOT_BASE)
-    st.plotly_chart(fig_r, use_container_width=True)
+    st.plotly_chart(fig_v1, use_container_width=True)
 
-    # ── Gráfico 3: Visão consolidada das 4 séries ────────────────────────
-    st.markdown('<div class="section-title">Visão Consolidada · 4 Séries</div>', unsafe_allow_html=True)
+    # ════════════════════════════════════════════════════════════════════════
+    # BLOCO 2 — VENDAS: REAL vs ORÇAMENTO por Subproduto (acumulado Jan-Abr)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-title">Vendas por Subproduto: Real vs. Orçamento (Jan–Abr acumulado)</div>',
+                unsafe_allow_html=True)
 
-    fig_all = go.Figure()
-    fig_all.add_trace(go.Scatter(name="Vendas Reais KAM", x=_MES4, y=_vendas_real,
-        mode="lines+markers", line=dict(color="#2D6BE4", width=2.5), marker=dict(size=9)))
-    fig_all.add_trace(go.Scatter(name="Vendas Meta", x=_MES4, y=_vendas_meta,
-        mode="lines+markers", line=dict(color="#2D6BE4", width=2, dash="dot"),
-        marker=dict(size=8, symbol="diamond")))
-    fig_all.add_trace(go.Scatter(name="Receita Real (IFRS)", x=_MES4, y=_rec_real,
-        mode="lines+markers", line=dict(color=COLORS["green"], width=2.5), marker=dict(size=9)))
-    fig_all.add_trace(go.Scatter(name="Receita Meta", x=_MES4, y=_rec_meta,
-        mode="lines+markers", line=dict(color=COLORS["green"], width=2, dash="dot"),
-        marker=dict(size=8, symbol="diamond")))
-    fig_all.update_layout(height=420,
-        title="Comparativo: Vendas e Receita (Real vs. Meta)",
-        legend=dict(orientation="h", y=-0.2, font_size=11),
+    # Real por subproduto (usando 'de para subproduto' para alinhar com orçamento)
+    _real_sub = (_df_real_all[_df_real_all["Venda Total"] > 0]
+                 .groupby("Subproduto")["Venda Total"].sum()
+                 .reset_index().rename(columns={"Subproduto":"sub","Venda Total":"real"}))
+
+    if _orc_ok:
+        _orc_sub = (_orc_jan_abr.groupby("de para subproduto")["Value"].sum()
+                    .reset_index().rename(columns={"de para subproduto":"sub","Value":"orc"}))
+        _sub_merged = _real_sub.merge(_orc_sub, on="sub", how="outer").fillna(0)
+        _sub_merged = _sub_merged[(_sub_merged["real"] > 0) | (_sub_merged["orc"] > 0)]
+        _sub_merged["gap"] = _sub_merged["real"] - _sub_merged["orc"]
+        _sub_merged["ating_%"] = _sub_merged.apply(
+            lambda r: r["real"]/r["orc"]*100 if r["orc"] > 0 else None, axis=1)
+        _sub_merged = _sub_merged.sort_values("orc", ascending=False).head(15)
+
+        fig_sub = go.Figure()
+        fig_sub.add_trace(go.Bar(name="Real", x=_sub_merged["real"], y=_sub_merged["sub"],
+            orientation="h", offsetgroup=1, marker_color="#2D6BE4",
+            text=[fmt_brl(v) for v in _sub_merged["real"]], textposition="outside"))
+        fig_sub.add_trace(go.Bar(name="Orçamento", x=_sub_merged["orc"], y=_sub_merged["sub"],
+            orientation="h", offsetgroup=2, marker_color="#94A3B8",
+            text=[fmt_brl(v) for v in _sub_merged["orc"]], textposition="outside"))
+        fig_sub.update_layout(barmode="group", height=520,
+            title="Top 15 Subprodutos — Real vs. Orçamento",
+            legend=dict(orientation="h", y=-0.12, font_size=12),
+            xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Valor (R$)"),
+            yaxis=dict(autorange="reversed"), **PLOT_BASE)
+        st.plotly_chart(fig_sub, use_container_width=True)
+
+        # Tabela gap por subproduto
+        st.markdown('<div class="section-title">Gap por Subproduto</div>', unsafe_allow_html=True)
+        _tbl_sub = _sub_merged.copy()
+        _tbl_sub["Real"]       = _tbl_sub["real"].apply(fmt_brl)
+        _tbl_sub["Orçamento"]  = _tbl_sub["orc"].apply(fmt_brl)
+        _tbl_sub["Gap (R-O)"]  = _tbl_sub["gap"].apply(lambda v: fmt_brl(v))
+        _tbl_sub["% Ating."]   = _tbl_sub["ating_%"].apply(
+            lambda v: f"{v:.0f}%" if pd.notna(v) else "-")
+        st.dataframe(
+            _tbl_sub[["sub","Real","Orçamento","Gap (R-O)","% Ating."]]
+            .rename(columns={"sub":"Subproduto"}),
+            use_container_width=True, hide_index=True)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # BLOCO 3 — RECEITA RECONHECIDA: REAL vs META por mês
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-title">Receita Reconhecida por Mês: Real (IFRS) vs. Meta</div>',
+                unsafe_allow_html=True)
+
+    if _rec_ok:
+        _rec_real_vals = [float(_cc[_cc["MÊS IFRS CONTABIL - REPORT"]==m]["Total"].sum())
+                          for m in _MES4_NUM]
+    else:
+        _rec_real_vals = [0]*4
+
+    fig_r1 = go.Figure()
+    fig_r1.add_trace(go.Bar(name="Receita Real (IFRS)", x=_MES4, y=_rec_real_vals,
+        offsetgroup=1, marker_color=COLORS["green"],
+        text=[fmt_brl(v) for v in _rec_real_vals], textposition="outside"))
+    fig_r1.add_trace(go.Bar(name="Receita Meta", x=_MES4, y=_rec_meta_vals,
+        offsetgroup=2, marker_color="#94A3B8",
+        text=[fmt_brl(v) for v in _rec_meta_vals], textposition="outside"))
+    for mes, rr, rm in zip(_MES4, _rec_real_vals, _rec_meta_vals):
+        if rm and rm > 0:
+            pct = rr / rm * 100
+            cor = COLORS["green"] if pct >= 100 else COLORS["yellow"] if pct >= 70 else COLORS["red"]
+            fig_r1.add_annotation(x=mes, y=max(rr, rm)*1.18,
+                text=f"<b>{pct:.0f}%</b>", showarrow=False,
+                font=dict(size=12, color=cor))
+    fig_r1.update_layout(barmode="group", height=460,
+        title="Receita Reconhecida Corp+Cons — % atingimento no topo de cada par",
+        legend=dict(orientation="h", y=-0.15, font_size=12),
         yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Valor (R$)"), **PLOT_BASE)
-    st.plotly_chart(fig_all, use_container_width=True)
+    st.plotly_chart(fig_r1, use_container_width=True)
 
-    # ── Tabela resumo ────────────────────────────────────────────────────
-    st.markdown('<div class="section-title">Tabela Resumo</div>', unsafe_allow_html=True)
+    # ════════════════════════════════════════════════════════════════════════
+    # BLOCO 4 — TABELA RESUMO CONSOLIDADA
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-title">Resumo Consolidado Jan–Abr</div>', unsafe_allow_html=True)
     _rows = []
-    for mes, vr, vm, rr, rm in zip(_MES4, _vendas_real, _vendas_meta, _rec_real, _rec_meta):
+    for mes, vr, vo, rr, rm in zip(_MES4, _vr_mes, _vo_mes, _rec_real_vals, _rec_meta_vals):
         _rows.append({
             "Mês":                 mes,
-            "Vendas Reais KAM":    fmt_brl(vr),
-            "Vendas Meta":         fmt_brl(vm),
-            "% Ating. Vendas":     f"{vr/vm*100:.0f}%" if vm else "-",
+            "Vendas Real":         fmt_brl(vr),
+            "Vendas Orçado":       fmt_brl(vo),
+            "% Ating. Vendas":     f"{vr/vo*100:.0f}%" if vo else "-",
             "Receita Real (IFRS)": fmt_brl(rr),
             "Receita Meta":        fmt_brl(rm),
             "% Ating. Receita":    f"{rr/rm*100:.0f}%" if rm else "-",
         })
     st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
 
-    # ── Insights ─────────────────────────────────────────────────────────
+    # ════════════════════════════════════════════════════════════════════════
+    # INSIGHTS
+    # ════════════════════════════════════════════════════════════════════════
     st.markdown('<div class="section-title">🔍 Insights</div>', unsafe_allow_html=True)
-    _gap_v = sum(_vendas_real) - sum(_vendas_meta)
-    _gap_r = sum(_rec_real)    - sum(_rec_meta)
+    _gap_v = sum(_vr_mes) - sum(_vo_mes)
+    _gap_r = sum(_rec_real_vals) - sum(v for v in _rec_meta_vals if pd.notna(v))
     ci1, ci2, ci3 = st.columns(3)
     with ci1:
         cls = "ok" if _gap_v >= 0 else "warn"
-        pct = _gap_v / sum(_vendas_meta) * 100 if sum(_vendas_meta) else 0
+        pct = _gap_v / sum(_vo_mes) * 100 if sum(_vo_mes) else 0
         st.markdown(f"""<div class="insight-box {cls}">
-        <b>{'✅ Vendas acima do orçamento' if _gap_v>=0 else '⚠️ Vendas abaixo do orçamento'}</b><br>
-        Jan–Abr acumulado: {'+' if _gap_v>=0 else ''}{pct:.1f}% vs. meta.<br>
+        <b>{"✅ Vendas acima do orçamento" if _gap_v>=0 else "⚠️ Vendas abaixo do orçamento"}</b><br>
+        Jan–Abr: {"+".rstrip("+")+("" if _gap_v>=0 else "")}{pct:.1f}% vs. orçado.<br>
         Gap: {fmt_brl(abs(_gap_v))}.
         </div>""", unsafe_allow_html=True)
     with ci2:
         cls = "ok" if _gap_r >= 0 else "warn"
-        pct = _gap_r / sum(_rec_meta) * 100 if sum(_rec_meta) else 0
+        pct = _gap_r / sum(v for v in _rec_meta_vals if pd.notna(v)) * 100 if _rec_meta_vals else 0
         st.markdown(f"""<div class="insight-box {cls}">
-        <b>{'✅ Receita acima da meta' if _gap_r>=0 else '⚠️ Receita abaixo da meta'}</b><br>
-        Jan–Abr acumulado: {'+' if _gap_r>=0 else ''}{pct:.1f}% vs. meta.<br>
+        <b>{"✅ Receita acima da meta" if _gap_r>=0 else "⚠️ Receita abaixo da meta"}</b><br>
+        Jan–Abr: {"+".rstrip("+")+("" if _gap_r>=0 else "")}{pct:.1f}% vs. meta.<br>
         Gap: {fmt_brl(abs(_gap_r))}.
         </div>""", unsafe_allow_html=True)
     with ci3:
-        _diff = sum(_vendas_real) - sum(_rec_real)
+        _diff = sum(_vr_mes) - sum(_rec_real_vals)
         st.markdown(f"""<div class="insight-box">
         <b>📦 Vendas ainda não reconhecidas</b><br>
-        {fmt_brl(_diff)} vendidos pelos KAMs ainda não entraram como receita IFRS.
-        Serão reconhecidos nos próximos meses via cohort.
+        {fmt_brl(_diff)} vendidos ainda não entraram como receita IFRS.<br>
+        Serão reconhecidos via cohort nos próximos meses.
         </div>""", unsafe_allow_html=True)
 
 st.markdown("---")
